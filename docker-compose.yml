@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: unified-messaging-postgres
+    environment:
+      POSTGRES_USER: unified
+      POSTGRES_PASSWORD: unified
+      POSTGRES_DB: unified_messaging
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unified -d unified_messaging"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

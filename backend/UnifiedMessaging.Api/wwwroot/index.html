@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Unified Messaging — WhatsApp test console</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --line2: #8886; --accent: #2563eb; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 20px; }
+  h1 { font-size: 17px; margin: 0 0 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .55; margin: 0 0 10px; }
+  h3 { font-size: 12px; opacity: .7; margin: 14px 0 6px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .col { border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 12px 14px; }
+  fieldset > legend { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; opacity: .55; padding: 0 6px; }
+
+  label { display: block; font-size: 11px; opacity: .7; margin-bottom: 2px; }
+  input, select, textarea {
+    width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2);
+    background: transparent; color: inherit; font: inherit; margin-bottom: 8px;
+  }
+  textarea { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; min-height: 90px; resize: vertical; }
+  button {
+    padding: 7px 13px; border-radius: 6px; border: 1px solid var(--line2);
+    background: var(--accent); color: #fff; font-weight: 600; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: inherit; }
+  button.tiny { padding: 2px 8px; font-size: 11px; font-weight: 500; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 120px; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  code, .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+  code { background: #8882; padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; background: #8883; }
+  .pill.connected { background: #16a34a22; color: #16a34a; }
+  .pill.waiting_for_scan, .pill.pending, .pill.starting { background: #d9770622; color: #d97706; }
+  .pill.disconnected, .pill.needs_reauth, .pill.no.account { background: #dc262622; color: #dc2626; }
+
+  #qr { display: block; width: 240px; max-width: 100%; aspect-ratio: 1; margin: 10px 0; border-radius: 8px; background: #fff; }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; margin-bottom: 8px; }
+  .kv dt { opacity: .6; }
+  .kv dd { margin: 0; }
+
+  .ep { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+  .ep:hover { border-color: var(--accent); }
+  .verb { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
+  .verb.GET { background: #16a34a22; color: #16a34a; }
+  .verb.POST { background: #2563eb22; color: var(--accent); }
+  .verb.DELETE { background: #dc262622; color: #dc2626; }
+  .ep .path { font-family: ui-monospace, monospace; font-size: 11px; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  pre { background: #8881; border-radius: 8px; padding: 10px; overflow: auto; font-size: 12px; max-height: 340px; margin: 0; }
+  .resp-meta { font-size: 12px; margin: 8px 0 4px; }
+  .ok { color: #16a34a; } .bad { color: #dc2626; }
+
+  #messages { list-style: none; padding: 0; margin: 0; max-height: 220px; overflow: auto; }
+  #messages li { border-bottom: 1px solid var(--line); padding: 7px 0; }
+  #messages .meta { font-size: 11px; opacity: .55; }
+  .in { color: var(--accent); } .out { color: #16a34a; }
+  .react-bar { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+  .react-bar .rx { padding: 1px 6px; font-size: 13px; line-height: 1.3; }
+
+  #log { font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; background: #8881; border-radius: 8px; padding: 9px; max-height: 120px; overflow: auto; }
+  .hint { opacity: .55; font-size: 12px; }
+  .disabled-overlay { opacity: .45; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<h1>WhatsApp test console
+  <span class="pill no account" id="status">no account</span>
+  <span class="hint" id="baseLabel"></span>
+</h1>
+
+<div class="grid">
+
+  <!-- ============ LEFT: connection lifecycle ============ -->
+  <section class="col">
+    <h2>1 · Connection</h2>
+
+    <fieldset>
+      <legend>Account</legend>
+      <div class="row">
+        <div><label>Display name</label><input id="displayName" value="Test line" /></div>
+        <div><label>Password (min 6 — needed for every call)</label><input id="password" type="password" value="test-pass" /></div>
+        <button id="createBtn">Create account</button>
+      </div>
+      <div class="btns" style="margin-top:4px">
+        <button id="forgetBtn" class="secondary tiny" disabled>Forget account</button>
+      </div>
+      <div class="hint">Already have an account id? Paste it + its password and click <b>Use existing</b>.</div>
+      <div class="row" style="margin-top:4px">
+        <div><label>Existing account id</label><input id="existingId" placeholder="uuid" /></div>
+        <button id="useExistingBtn" class="secondary">Use existing</button>
+      </div>
+      <dl class="kv" style="margin-top:10px">
+        <dt>Account id</dt><dd><code id="accId">—</code></dd>
+        <dt>Status</dt><dd><span id="statusInline">—</span></dd>
+      </dl>
+    </fieldset>
+
+    <fieldset id="connectFs">
+      <legend>Login / logout</legend>
+      <div class="btns">
+        <button id="connectBtn" disabled>Get QR / connect</button>
+        <button id="logoutBtn" class="secondary" disabled>Log out</button>
+      </div>
+      <img id="qr" alt="" hidden />
+      <div class="hint">Open WhatsApp → <b>Linked devices</b> → <b>Link a device</b>, scan the QR.
+        It rotates ~every 20&nbsp;s (auto-refreshed here). Log out drops the session and wipes stored
+        credentials, so the next connect shows a fresh QR.</div>
+    </fieldset>
+
+    <fieldset id="clientApiFs" class="disabled-overlay">
+      <legend>Client API — available once connected</legend>
+
+      <dl class="kv">
+        <dt>Base URL</dt><dd><code id="apiBase"></code></dd>
+        <dt>Account</dt><dd><code id="apiAcc"></code></dd>
+      </dl>
+
+      <h3>Webhook subscription</h3>
+      <div class="row">
+        <div><label>Callback URL (try webhook.site)</label><input id="cbUrl" placeholder="https://webhook.site/xxxx" /></div>
+        <button id="subBtn" disabled>Create</button>
+      </div>
+      <dl class="kv" id="subInfo" hidden>
+        <dt>Subscription</dt><dd><code id="subId"></code></dd>
+        <dt>Signing secret</dt><dd><code id="subSecret"></code> <span class="hint">(shown once)</span></dd>
+      </dl>
+      <div class="hint">Events are signed: <code>X-Unified-Signature: sha256=HMAC_SHA256(secret, "{timestamp}.{body}")</code></div>
+
+      <h3>Endpoints — click to load into the playground →</h3>
+      <div id="endpoints"></div>
+    </fieldset>
+
+    <fieldset id="sendFs" class="disabled-overlay">
+      <legend>Send a message</legend>
+      <div><label>To — number (country code, no +) or &lt;jid&gt;@g.us</label>
+        <input id="sendTo" placeholder="491701234567" /></div>
+
+      <div class="btns" style="margin:2px 0 8px">
+        <button id="modeTextBtn" class="tiny">Text</button>
+        <button id="modeFileBtn" class="tiny secondary">File</button>
+        <button id="modePollBtn" class="tiny secondary">Poll</button>
+      </div>
+
+      <div id="textMode">
+        <label>Message</label>
+        <textarea id="sendText" style="min-height:60px">hello from the unified API</textarea>
+        <div class="row">
+          <div><label>Reply to message id (optional)</label><input id="sendReplyTo" placeholder="providerMessageId" /></div>
+          <div><label>Mentions — JIDs, comma-sep (optional)</label><input id="sendMentions" placeholder="49999@s.whatsapp.net" /></div>
+        </div>
+      </div>
+
+      <div id="fileMode" hidden>
+        <label>File (image / video / audio / any document, ≤25 MB)</label>
+        <input id="sendFile" type="file" />
+        <label>Caption (optional)</label>
+        <input id="sendCaption" placeholder="caption" />
+        <label style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <input id="sendPtt" type="checkbox" style="width:auto;margin:0"> send audio as a voice note
+        </label>
+      </div>
+
+      <div id="pollMode" hidden>
+        <label>Question</label>
+        <input id="pollName" placeholder="Lunch?" />
+        <label>Options — one per line (2+)</label>
+        <textarea id="pollOptions" style="min-height:56px">Pizza
+Sushi
+Salad</textarea>
+        <label>Max selectable</label>
+        <input id="pollSelectable" type="number" value="1" min="1" style="width:90px" />
+      </div>
+
+      <button id="doSendBtn" disabled style="margin-top:8px">Send</button>
+      <div class="hint" id="sendHint"></div>
+    </fieldset>
+
+    <fieldset id="convoFs" class="disabled-overlay">
+      <legend>Conversations (inbox)</legend>
+      <button id="refreshConvos" class="secondary tiny">refresh</button>
+      <ul id="convos" style="list-style:none;padding:0;margin:8px 0 0;max-height:240px;overflow:auto"></ul>
+    </fieldset>
+  </section>
+
+  <!-- ============ RIGHT: API playground ============ -->
+  <section class="col">
+    <h2>2 · API playground</h2>
+
+    <fieldset>
+      <legend>Request</legend>
+      <div class="row">
+        <div style="flex:0 0 110px"><label>Method</label>
+          <select id="method"><option>GET</option><option>POST</option><option>DELETE</option></select>
+        </div>
+        <div style="flex:1"><label>Path</label><input id="path" value="/api/accounts" /></div>
+      </div>
+      <div class="hint" id="pathHint" style="margin:-4px 0 8px">tip: click an endpoint on the left to fill this correctly</div>
+      <label>Body (JSON — POST only)</label>
+      <textarea id="body">{
+  "chatId": "491701234567",
+  "text": "hello from the unified API"
+}</textarea>
+      <div class="btns">
+        <button id="sendReqBtn">Send request</button>
+        <button id="clearHistBtn" class="secondary tiny">Clear history</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Response</legend>
+      <div class="resp-meta" id="respMeta">—</div>
+      <pre id="respBody">(no request yet)</pre>
+    </fieldset>
+
+    <fieldset>
+      <legend>History</legend>
+      <div id="history" class="hint">No calls yet.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Live messages (polls GET /messages every 4s)</legend>
+      <button id="refreshMsgs" class="secondary tiny">refresh now</button>
+      <ul id="messages"></ul>
+    </fieldset>
+
+    <fieldset>
+      <legend>Connector events (what WhatsApp delivered)</legend>
+      <button id="refreshDbg" class="secondary tiny">refresh</button>
+      <pre id="dbg">click refresh</pre>
+    </fieldset>
+
+    <fieldset>
+      <legend>Log</legend>
+      <div id="log"></div>
+    </fieldset>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const BASE = location.origin;
+$("#baseLabel").textContent = BASE;
+$("#apiBase").textContent = BASE;
+
+const log = m => { $("#log").textContent =
+  `${new Date().toLocaleTimeString()}  ${m}\n` + $("#log").textContent; };
+
+let accountId = localStorage.getItem("accountId") || null;
+let accountPassword = localStorage.getItem("accountPassword") || null;
+let pollTimer = null;
+let history = [];
+
+function authHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (accountPassword) h["X-Account-Password"] = accountPassword;
+  return h;
+}
+
+// ---------- generic fetch ----------
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { ...authHeaders(), ...(opts.headers || {}) }, ...opts });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new Error(typeof data === "string" ? data : JSON.stringify(data));
+  return data;
+}
+
+// Wipe everything on screen (used on logout / forget).
+function resetView({ keepStatus } = {}) {
+  clearInterval(pollTimer); pollTimer = null;
+  $("#qr").hidden = true; $("#qr").src = "";
+  $("#messages").innerHTML = "";
+  $("#dbg").textContent = "click refresh";
+  $("#respMeta").textContent = "—";
+  $("#respBody").textContent = "(no request yet)";
+  $("#subInfo").hidden = true; $("#subId").textContent = ""; $("#subSecret").textContent = "";
+  $("#cbUrl").value = "";
+  history = []; renderHistory();
+  if (!keepStatus) setStatus("no account");
+}
+
+// ---------- status ----------
+function setStatus(s) {
+  s = s || "no account";
+  $("#status").textContent = s;
+  $("#status").className = "pill " + s.replace(/ /g, ".");
+  $("#statusInline").textContent = s;
+
+  const connected = s === "connected";
+  $("#clientApiFs").classList.toggle("disabled-overlay", !connected);
+  $("#sendFs").classList.toggle("disabled-overlay", !connected);
+  $("#convoFs").classList.toggle("disabled-overlay", !connected);
+  $("#subBtn").disabled = !connected;
+  $("#doSendBtn").disabled = !connected;
+  if (connected) { $("#qr").hidden = true; renderEndpoints(); loadConvos(); }
+}
+
+// ---------- account lifecycle ----------
+function useAccount(id, password) {
+  accountId = id;
+  accountPassword = password;
+  localStorage.setItem("accountId", id);
+  localStorage.setItem("accountPassword", password);
+  $("#accId").textContent = id;
+  $("#apiAcc").textContent = id;
+  $("#connectBtn").disabled = false;
+  $("#logoutBtn").disabled = false;
+  $("#forgetBtn").disabled = false;
+  $("#path").value = `/api/accounts/${id}`;
+  renderEndpoints();
+  loadMessages();
+}
+
+$("#createBtn").onclick = async () => {
+  const password = $("#password").value;
+  if ((password || "").length < 6) { log("password must be at least 6 characters"); return; }
+  try {
+    const a = await api("/api/accounts", {
+      method: "POST",
+      body: JSON.stringify({ provider: "whatsapp", password, displayName: $("#displayName").value }),
+    });
+    useAccount(a.id, password);
+    setStatus(a.status);
+    log("account created " + a.id + " — password stored locally");
+  } catch (e) { log("create failed: " + e.message); }
+};
+
+$("#useExistingBtn").onclick = async () => {
+  const id = $("#existingId").value.trim();
+  const password = $("#password").value;
+  if (!id || !password) { log("enter both the existing account id and its password"); return; }
+  // Verify credentials before adopting them.
+  const saved = { accountId, accountPassword };
+  accountId = id; accountPassword = password;
+  try {
+    const a = await api(`/api/accounts/${id}`);
+    useAccount(id, password);
+    setStatus(a.status);
+    log("using existing account " + id + " (" + a.status + ")");
+    if (a.status === "connected" || a.status === "waiting_for_scan") resumeSession();
+  } catch (e) {
+    accountId = saved.accountId; accountPassword = saved.accountPassword;
+    log("could not use account: " + e.message);
+  }
+};
+
+$("#forgetBtn").onclick = () => {
+  localStorage.removeItem("accountId");
+  localStorage.removeItem("accountPassword");
+  accountId = null; accountPassword = null;
+  $("#accId").textContent = $("#apiAcc").textContent = "—";
+  $("#connectBtn").disabled = $("#logoutBtn").disabled = $("#forgetBtn").disabled = true;
+  resetView();
+  log("forgot local account — id + password cleared");
+};
+
+// ---------- connect / QR ----------
+async function pollConnect() {
+  if (!accountId) return;
+  try {
+    const r = await api(`/api/accounts/${accountId}/connect`);
+    if (r.qrImageDataUrl) { $("#qr").src = r.qrImageDataUrl; $("#qr").hidden = false; }
+    setStatus(r.status);
+    if (r.status === "connected") {
+      clearInterval(pollTimer); pollTimer = null;
+      log("connected ✔"); loadMessages();
+    }
+  } catch (e) { log("poll error: " + e.message); }
+}
+
+$("#connectBtn").onclick = () => resumeSession({ showQr: true });
+
+// Resume a session. If stored WhatsApp credentials are still valid the connector
+// reconnects silently (no QR). A QR only appears when a fresh scan is required.
+async function resumeSession({ showQr = false } = {}) {
+  try {
+    const r = await api(`/api/accounts/${accountId}/connect`, { method: "POST" });
+    if (r.qrImageDataUrl && (showQr || r.status === "waiting_for_scan")) {
+      $("#qr").src = r.qrImageDataUrl; $("#qr").hidden = false;
+    }
+    setStatus(r.status);
+    log(r.status === "connected" ? "reconnected without QR ✔" : "connect: " + r.status);
+    clearInterval(pollTimer);
+    pollTimer = setInterval(pollConnect, 2000);
+  } catch (e) { log("connect failed: " + e.message); }
+}
+
+$("#logoutBtn").onclick = async () => {
+  try {
+    await api(`/api/accounts/${accountId}/logout`, { method: "POST" });
+    log("logged out — WhatsApp session ended and credentials wiped");
+  } catch (e) { log("logout: " + e.message); }
+  resetView({ keepStatus: true });
+  setStatus("disconnected");
+};
+
+// ---------- webhook subscription ----------
+$("#subBtn").onclick = async () => {
+  const s = await api(`/api/accounts/${accountId}/webhooks`, {
+    method: "POST",
+    body: JSON.stringify({ callbackUrl: $("#cbUrl").value.trim() }),
+  });
+  $("#subId").textContent = s.id;
+  $("#subSecret").textContent = s.secret;
+  $("#subInfo").hidden = false;
+  log("webhook subscription created " + s.id);
+  renderEndpoints();
+};
+
+// ---------- send a message (text / file / poll) ----------
+let sendMode = "text";
+function setSendMode(m) {
+  sendMode = m;
+  $("#textMode").hidden = m !== "text";
+  $("#fileMode").hidden = m !== "file";
+  $("#pollMode").hidden = m !== "poll";
+  for (const [mode, btn] of [["text", "#modeTextBtn"], ["file", "#modeFileBtn"], ["poll", "#modePollBtn"]])
+    $(btn).className = "tiny" + (m === mode ? "" : " secondary");
+}
+$("#modeTextBtn").onclick = () => setSendMode("text");
+$("#modeFileBtn").onclick = () => setSendMode("file");
+$("#modePollBtn").onclick = () => setSendMode("poll");
+
+const fileToBase64 = file => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(",")[1]);
+  r.onerror = reject;
+  r.readAsDataURL(file);
+});
+
+function mediaTypeFor(mime) {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  return "document";
+}
+
+$("#doSendBtn").onclick = async () => {
+  const chatId = $("#sendTo").value.trim();
+  if (!chatId) { $("#sendHint").textContent = "enter a recipient"; return; }
+
+  let path = `/api/accounts/${accountId}/messages`, body;
+  if (sendMode === "text") {
+    const text = $("#sendText").value;
+    if (!text) { $("#sendHint").textContent = "enter a message"; return; }
+    body = { chatId, text };
+    const replyTo = $("#sendReplyTo").value.trim();
+    if (replyTo) body.replyToMessageId = replyTo;
+    const mentions = $("#sendMentions").value.split(",").map(s => s.trim()).filter(Boolean);
+    if (mentions.length) body.mentions = mentions;
+  } else if (sendMode === "poll") {
+    const name = $("#pollName").value.trim();
+    const options = $("#pollOptions").value.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!name || options.length < 2) { $("#sendHint").textContent = "poll needs a question and 2+ options"; return; }
+    path = `/api/accounts/${accountId}/polls`;
+    body = { chatId, name, options, selectableCount: Math.max(1, parseInt($("#pollSelectable").value) || 1) };
+  } else {
+    const file = $("#sendFile").files[0];
+    if (!file) { $("#sendHint").textContent = "choose a file"; return; }
+    if (file.size > 25 * 1024 * 1024) { $("#sendHint").textContent = "file too large (max 25 MB)"; return; }
+    $("#sendHint").textContent = "reading file…";
+    const dataBase64 = await fileToBase64(file);
+    const type = mediaTypeFor(file.type || "");
+    body = { chatId, media: {
+      type, dataBase64,
+      fileName: file.name,
+      mimeType: file.type || null,
+      caption: $("#sendCaption").value || null,
+      ptt: type === "audio" && $("#sendPtt").checked,
+    }};
+  }
+
+  $("#doSendBtn").disabled = true;
+  $("#sendHint").textContent = "sending…";
+  try {
+    const r = await api(path, { method: "POST", body: JSON.stringify(body) });
+    $("#sendHint").textContent = "sent ✔ " + (r.id || r.status || "");
+    log("sent " + sendMode + " to " + chatId);
+    if (sendMode === "file") { $("#sendFile").value = ""; $("#sendCaption").value = ""; }
+    if (sendMode === "text") $("#sendReplyTo").value = "";
+    loadMessages();
+  } catch (e) {
+    $("#sendHint").textContent = "failed: " + e.message;
+    log("send failed: " + e.message);
+  } finally {
+    $("#doSendBtn").disabled = false;
+  }
+};
+
+// ---------- endpoint catalogue (populates the playground) ----------
+function endpointList() {
+  const id = accountId ?? "{accountId}";
+  return [
+    { m: "GET",    p: `/api/accounts/${id}`,          desc: "Account + connection status" },
+    { m: "GET",    p: `/api/accounts/${id}/messages`, desc: "Recent messages (all chats)" },
+    { m: "GET",    p: `/api/accounts/${id}/messages?direction=inbound&take=100`, desc: "Inbound only" },
+    { m: "GET",    p: `/api/accounts/${id}/messages?chatId=120363000000000000@g.us`, desc: "One conversation — edit the chatId" },
+    { m: "GET",    p: `/api/accounts/${id}/groups`,   desc: "Groups the account is in (grab a JID)" },
+    { m: "POST",   p: `/api/accounts/${id}/messages`, desc: "Send text (chatId = number or <jid>@g.us)",
+      body: { chatId: "491701234567", text: "hello from the unified API" } },
+    { m: "POST",   p: `/api/accounts/${id}/messages`, desc: "Send media by URL (image/video/audio/document)",
+      body: { chatId: "491701234567", media: { type: "image", url: "https://picsum.photos/600", caption: "look" } } },
+    { m: "POST",   p: `/api/accounts/${id}/messages`, desc: "Reply + mention",
+      body: { chatId: "491701234567", text: "@49999 replying", replyToMessageId: "AC96593C...", mentions: ["49999@s.whatsapp.net"] } },
+    { m: "POST",   p: `/api/accounts/${id}/reactions`, desc: "React to a message (emoji \"\" removes it)",
+      body: { chatId: "491701234567", targetMessageId: "AC96593C...", emoji: "👍", targetFromMe: false } },
+    { m: "POST",   p: `/api/accounts/${id}/polls`, desc: "Create a poll",
+      body: { chatId: "491701234567", name: "Lunch?", options: ["Pizza", "Sushi", "Salad"], selectableCount: 1 } },
+    { m: "GET",    p: `/api/accounts/${id}/conversations`, desc: "Inbox — one row per chat, unread counts" },
+    { m: "GET",    p: `/api/accounts/${id}/groups/120363000000000000@g.us`, desc: "Group metadata + participants — edit the JID" },
+    { m: "GET",    p: `/api/accounts/${id}/webhooks`, desc: "List webhook subscriptions" },
+    { m: "POST",   p: `/api/accounts/${id}/webhooks`, desc: "Create webhook subscription",
+      body: { callbackUrl: "https://webhook.site/xxxx" } },
+    { m: "GET",    p: `/api/accounts/${id}/connect`,  desc: "Current QR / connect status" },
+  ];
+}
+
+function renderEndpoints() {
+  $("#endpoints").innerHTML = "";
+  for (const ep of endpointList()) {
+    const div = document.createElement("div");
+    div.className = "ep";
+    div.innerHTML = `<span class="verb ${ep.m}">${ep.m}</span>
+                     <span class="path" title="${ep.p}">${ep.p}</span>`;
+    div.onclick = () => {
+      $("#method").value = ep.m;
+      $("#path").value = ep.p;
+      if (ep.body) $("#body").value = JSON.stringify(ep.body, null, 2);
+      $("#path").scrollIntoView({ behavior: "smooth", block: "center" });
+      log(`loaded ${ep.m} ${ep.p} — ${ep.desc}`);
+    };
+    $("#endpoints").appendChild(div);
+  }
+}
+
+// ---------- playground ----------
+$("#sendReqBtn").onclick = async () => {
+  const method = $("#method").value;
+  const path = $("#path").value.trim();
+  const opts = { method };
+
+  // Common mistake: POST/DELETE to the bare account path (only GET lives there).
+  if (method !== "GET" && /^\/api\/accounts\/[0-9a-f-]{36}\/?$/i.test(path)) {
+    $("#respMeta").innerHTML =
+      `<span class="bad">${method} isn't valid on ${path}</span>`;
+    $("#respBody").textContent =
+      `Did you mean:\n  POST ${path.replace(/\/$/, "")}/messages   (send a message)\n\n` +
+      `Click an endpoint on the left to load the right method + path + body.`;
+    return;
+  }
+  if (method !== "GET" && method !== "DELETE") {
+    try { opts.body = JSON.stringify(JSON.parse($("#body").value)); }
+    catch (e) { $("#respMeta").innerHTML = `<span class="bad">invalid JSON body: ${e.message}</span>`; return; }
+  }
+  const t0 = performance.now();
+  let status, ok, bodyText;
+  try {
+    const res = await fetch(path, { headers: authHeaders(), ...opts });
+    status = res.status; ok = res.ok;
+    const raw = await res.text();
+    try { bodyText = JSON.stringify(JSON.parse(raw), null, 2); } catch { bodyText = raw; }
+    if (!bodyText) bodyText = status === 404 ? "(404 — no route matches this path)"
+      : status === 405 ? "(405 — wrong method for this path)"
+      : "(empty response body)";
+  } catch (e) {
+    status = 0; ok = false; bodyText = "network error: " + e.message;
+  }
+  const ms = Math.round(performance.now() - t0);
+  $("#respMeta").innerHTML =
+    `<span class="${ok ? "ok" : "bad"}">${status || "ERR"}</span> · ${ms} ms · ${method} ${path}`;
+  $("#respBody").textContent = bodyText;
+
+  history.unshift({ method, path, status, ms, at: new Date().toLocaleTimeString() });
+  history = history.slice(0, 20);
+  renderHistory();
+  if (path.includes("/messages")) loadMessages();
+};
+
+function renderHistory() {
+  if (!history.length) { $("#history").innerHTML = "No calls yet."; return; }
+  $("#history").innerHTML = history.map(h =>
+    `<div class="mono" style="padding:3px 0;border-bottom:1px solid var(--line)">
+       <span class="${h.status >= 200 && h.status < 300 ? "ok" : "bad"}">${h.status || "ERR"}</span>
+       ${h.method} ${h.path} <span class="hint">· ${h.ms}ms · ${h.at}</span>
+     </div>`).join("");
+}
+$("#clearHistBtn").onclick = () => { history = []; renderHistory(); };
+
+// ---------- live messages ----------
+async function loadMessages() {
+  if (!accountId) return;
+  try {
+    const rows = await api(`/api/accounts/${accountId}/messages?take=30`);
+    const esc = s => (s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    const renderAtt = a => {
+      if (!a.url) return `<div class="hint">📎 ${a.type}${a.fileName ? " — " + esc(a.fileName) : ""} (no URL — download failed on connector)</div>`;
+      if (a.type === "image" || a.type === "sticker")
+        return `<a href="${a.url}" target="_blank"><img src="${a.url}" style="max-width:180px;max-height:180px;border-radius:6px;margin-top:4px"></a>`;
+      if (a.type === "video")
+        return `<video src="${a.url}" controls style="max-width:220px;border-radius:6px;margin-top:4px"></video>`;
+      if (a.type === "audio")
+        return `<audio src="${a.url}" controls style="margin-top:4px"></audio>`;
+      return `<div style="margin-top:4px">📄 <a href="${a.url}" target="_blank">${esc(a.fileName) || a.type}</a></div>`;
+    };
+    $("#messages").innerHTML = rows.map((m, i) => `
+      <li data-i="${i}">
+        ${m.replyToMessageId ? `<div class="hint" style="border-left:2px solid var(--line2);padding-left:6px">↩︎ ${esc(m.replyToText) || m.replyToMessageId}</div>` : ""}
+        <div class="${m.direction === "inbound" ? "in" : "out"}">
+          ${m.direction === "inbound" ? "◀ " : "▶ "}${m.pollName ? "📊 " + esc(m.pollName) : (m.text ? esc(m.text) : (m.attachments?.length ? "" : "[no text]"))}
+        </div>
+        ${m.pollOptions?.length ? `<div class="hint">${m.pollOptions.map(o => "• " + esc(o)).join("<br>")}</div>` : ""}
+        ${(m.attachments ?? []).map(renderAtt).join("")}
+        ${m.mentions?.length ? `<div class="hint">@ ${m.mentions.map(esc).join(", ")}</div>` : ""}
+        <div class="meta">${esc(m.chatId)}${m.direction === "inbound" ? " · from " + esc(m.senderId) : ""} · ${new Date(m.timestamp).toLocaleString()}
+          ${m.providerMessageId ? `<code style="font-size:10px">${m.providerMessageId}</code>` : ""}</div>
+        ${m.providerMessageId ? `<div class="react-bar" data-i="${i}">
+          ${["👍","❤️","😂","😮","😢","🙏"].map(e => `<button class="tiny secondary rx" data-e="${e}">${e}</button>`).join("")}
+          <button class="tiny secondary rx" data-e="">clear</button>
+          <button class="tiny secondary reply-btn">↩︎ reply</button>
+        </div>` : ""}
+      </li>`).join("") || '<li class="hint">none yet</li>';
+
+    lastRows = rows;
+    document.querySelectorAll("#messages .rx").forEach(btn => {
+      btn.onclick = () => reactTo(rows[+btn.closest(".react-bar").dataset.i], btn.dataset.e);
+    });
+    document.querySelectorAll("#messages .reply-btn").forEach(btn => {
+      btn.onclick = () => {
+        const m = rows[+btn.closest(".react-bar").dataset.i];
+        setSendMode("text");
+        $("#sendTo").value = m.chatId;
+        $("#sendReplyTo").value = m.providerMessageId;
+        $("#sendText").focus();
+        $("#sendHint").textContent = "replying to " + m.providerMessageId;
+      };
+    });
+  } catch (e) { log("load messages: " + e.message); }
+}
+let lastRows = [];
+
+async function reactTo(m, emoji) {
+  if (!m?.providerMessageId) return;
+  const isGroup = m.chatId.includes("@g.us");
+  try {
+    await api(`/api/accounts/${accountId}/reactions`, {
+      method: "POST",
+      body: JSON.stringify({
+        chatId: m.chatId,
+        targetMessageId: m.providerMessageId,
+        targetFromMe: m.direction === "outbound",
+        targetParticipant: isGroup && m.direction === "inbound" ? m.senderId : null,
+        emoji,
+      }),
+    });
+    log((emoji ? "reacted " + emoji : "cleared reaction") + " on " + m.providerMessageId);
+  } catch (e) { log("react failed: " + e.message); }
+}
+$("#refreshMsgs").onclick = loadMessages;
+setInterval(loadMessages, 4000);
+
+// ---------- conversations (inbox) ----------
+async function loadConvos() {
+  if (!accountId) return;
+  try {
+    const rows = await api(`/api/accounts/${accountId}/conversations`);
+    const esc = s => (s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+    $("#convos").innerHTML = rows.map(c => `
+      <li style="border-bottom:1px solid var(--line);padding:6px 0;cursor:pointer" data-chat="${esc(c.chatId)}">
+        <div>${c.isGroup ? "👥 " : "👤 "}${esc(c.name) || esc(c.chatId)}
+          ${c.unreadCount ? `<span class="pill" style="background:#2563eb;color:#fff">${c.unreadCount}</span>` : ""}</div>
+        <div class="hint">${c.lastMessageDirection === "outbound" ? "▶ " : ""}${esc(c.lastMessagePreview) || ""}
+          ${c.lastMessageAt ? "· " + new Date(c.lastMessageAt).toLocaleString() : ""}</div>
+        <button class="tiny secondary mark-read" style="margin-top:3px">mark read</button>
+      </li>`).join("") || '<li class="hint">no conversations yet</li>';
+
+    document.querySelectorAll("#convos li[data-chat]").forEach(li => {
+      const chat = li.dataset.chat;
+      li.querySelector("div").onclick = () => {
+        $("#sendTo").value = chat;
+        $("#path").value = `/api/accounts/${accountId}/messages?chatId=${chat}`;
+        $("#method").value = "GET";
+        log("selected conversation " + chat);
+      };
+      li.querySelector(".mark-read").onclick = async (e) => {
+        e.stopPropagation();
+        try { await api(`/api/accounts/${accountId}/conversations/${encodeURIComponent(chat)}/read`, { method: "POST" }); loadConvos(); }
+        catch (err) { log("mark read: " + err.message); }
+      };
+    });
+  } catch (e) { $("#convos").innerHTML = `<li class="hint">error: ${e.message}</li>`; }
+}
+$("#refreshConvos").onclick = loadConvos;
+setInterval(() => { if (accountId && accountPassword) loadConvos(); }, 6000);
+
+async function loadDebug() {
+  try {
+    const rows = await api("/api/whatsapp/debug/events");
+    $("#dbg").textContent = Array.isArray(rows) && rows.length
+      ? rows.map(r => `${r.at?.slice(11, 19)}  ${JSON.stringify(
+          Object.fromEntries(Object.entries(r).filter(([k]) => k !== "at")))}`).join("\n")
+      : "(no inbound events recorded yet — send yourself a message)";
+  } catch (e) { $("#dbg").textContent = "error: " + e.message; }
+}
+$("#refreshDbg").onclick = loadDebug;
+
+// ---------- boot ----------
+renderEndpoints();
+renderHistory();
+if (accountId && accountPassword) {
+  $("#accId").textContent = $("#apiAcc").textContent = accountId;
+  $("#connectBtn").disabled = $("#logoutBtn").disabled = $("#forgetBtn").disabled = false;
+  $("#path").value = `/api/accounts/${accountId}`;
+  api(`/api/accounts/${accountId}`)
+    .then(a => {
+      setStatus(a.status);
+      loadMessages();
+      // Session persists across reloads — resume it without asking for a QR again.
+      if (["connected", "waiting_for_scan", "pending"].includes(a.status)) resumeSession();
+    })
+    .catch(e => {
+      log("saved account no longer valid (" + e.message + ")");
+      localStorage.removeItem("accountId"); localStorage.removeItem("accountPassword");
+      accountId = accountPassword = null;
+      $("#connectBtn").disabled = $("#logoutBtn").disabled = $("#forgetBtn").disabled = true;
+      setStatus("no account");
+    });
+} else {
+  setStatus("no account");
+}
+</script>
+</body>
+</html>

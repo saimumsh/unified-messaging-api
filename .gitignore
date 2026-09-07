@@ -1,0 +1,22 @@
+# .NET
+bin/
+obj/
+*.user
+[Dd]ebug/
+[Rr]elease/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# WhatsApp session credentials (never commit these)
+whatsapp-connector/sessions/
+
+# Env
+.env
+*.env.local
+
+# OS / editor
+.DS_Store
+.vs/
+.idea/

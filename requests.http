@@ -1,0 +1,83 @@
+@api = http://localhost:5080
+@connectorSecret = dev-connector-secret
+@pw = secret123
+
+### Health
+GET {{api}}/health
+
+### 1. Create a WhatsApp account (password required, set once)
+# @name createAccount
+POST {{api}}/api/accounts
+Content-Type: application/json
+
+{ "provider": "whatsapp", "password": "{{pw}}", "displayName": "Support line" }
+
+### capture id
+@accountId = {{createAccount.response.body.id}}
+
+### 2. Subscribe a customer webhook (secret returned once)
+POST {{api}}/api/accounts/{{accountId}}/webhooks
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "callbackUrl": "https://webhook.site/your-uuid" }
+
+### 3. Start / resume the connect flow -> QR only if a fresh scan is needed
+POST {{api}}/api/accounts/{{accountId}}/connect
+X-Account-Password: {{pw}}
+
+### 3b. Poll QR / status
+GET {{api}}/api/accounts/{{accountId}}/connect
+X-Account-Password: {{pw}}
+
+### 4. Send a text message (once status == "connected")
+POST {{api}}/api/accounts/{{accountId}}/messages
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "chatId": "491701234567", "text": "Hello from the unified API" }
+
+### 4b. Send media
+POST {{api}}/api/accounts/{{accountId}}/messages
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "chatId": "491701234567", "media": { "type": "image", "url": "https://picsum.photos/600", "caption": "hi" } }
+
+### 5. List recent messages  (?direction=inbound|outbound  ?chatId=<jid>  ?take=)
+GET {{api}}/api/accounts/{{accountId}}/messages
+X-Account-Password: {{pw}}
+
+### 6. List groups
+GET {{api}}/api/accounts/{{accountId}}/groups
+X-Account-Password: {{pw}}
+
+### 7. Log out (ends WhatsApp session, wipes stored credentials)
+POST {{api}}/api/accounts/{{accountId}}/logout
+X-Account-Password: {{pw}}
+
+### --- Simulated connector calls (normally the Node service makes these) ---
+
+### Inbound message (Baileys `messages.upsert` payload)
+POST {{api}}/api/webhooks/whatsapp
+Content-Type: application/json
+X-Connector-Secret: {{connectorSecret}}
+
+{
+  "accountId": "{{accountId}}",
+  "raw": {
+    "key": { "remoteJid": "491701234567@s.whatsapp.net", "fromMe": false, "id": "BAE5TEST01" },
+    "messageTimestamp": 1757082000,
+    "message": { "conversation": "hi there" }
+  }
+}
+
+### Connection status update
+POST {{api}}/api/internal/whatsapp/status
+Content-Type: application/json
+X-Connector-Secret: {{connectorSecret}}
+
+{ "accountId": "{{accountId}}", "status": "connected", "externalAccountId": "491701234567@s.whatsapp.net" }
+
+### Connector debug buffer
+GET {{api}}/api/whatsapp/debug/events

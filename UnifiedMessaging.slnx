@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/backend/">
+    <Project Path="backend/UnifiedMessaging.Api.Tests/UnifiedMessaging.Api.Tests.csproj" />
+    <Project Path="backend/UnifiedMessaging.Api/UnifiedMessaging.Api.csproj" />
+  </Folder>
+</Solution>

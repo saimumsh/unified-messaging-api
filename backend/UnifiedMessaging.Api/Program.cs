@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using UnifiedMessaging.Api.Adapters;
+using UnifiedMessaging.Api.Adapters.LinkedIn;
 using UnifiedMessaging.Api.Adapters.WhatsApp;
 using UnifiedMessaging.Api.Data;
 using UnifiedMessaging.Api.Endpoints;
@@ -13,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? "Host=localhost;Port=5432;Database=unified_messaging;Username=unified;Password=unified";
 var connectorBaseUrl = builder.Configuration["WhatsAppConnector:BaseUrl"] ?? "http://localhost:3001";
+var linkedInConnectorBaseUrl = builder.Configuration["LinkedInConnector:BaseUrl"] ?? "http://localhost:3002";
 var connectorSecret = builder.Configuration["Connector:SharedSecret"] ?? "dev-connector-secret";
 
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -33,6 +35,14 @@ builder.Services.AddHttpClient<WhatsAppConnectorClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(30);
 });
 builder.Services.AddScoped<IMessagingProviderAdapter, WhatsAppAdapter>();
+
+builder.Services.AddHttpClient<LinkedInConnectorClient>(c =>
+{
+    c.BaseAddress = new Uri(linkedInConnectorBaseUrl);
+    c.DefaultRequestHeaders.Add("X-Connector-Secret", connectorSecret);
+    c.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<IMessagingProviderAdapter, LinkedInAdapter>();
 // Later: builder.Services.AddScoped<IMessagingProviderAdapter, TelegramAdapter>(); etc.
 builder.Services.AddScoped<ProviderResolver>();
 builder.Services.AddScoped<UnifiedMessaging.Api.Data.ConversationService>();

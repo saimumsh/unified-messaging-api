@@ -34,6 +34,9 @@ app.get("/health", (_req, res) => res.json({ status: "ok", sessions: sessions.se
 // Debug: the last ~50 inbound events and what the connector did with each.
 app.get("/debug/events", (_req, res) => res.json(sessions.debug));
 
+// Debug: cached poll message ids per account (votes need the poll in this list).
+app.get("/accounts/:id/debug/polls", (req, res) => res.json(sessions.debugPolls(req.params.id)));
+
 // Debug: per-account session state (status, whether a live socket exists).
 app.get("/sessions", (_req, res) => {
   const out = {};

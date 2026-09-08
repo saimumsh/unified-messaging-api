@@ -1,6 +1,4 @@
 node_modules/
 sessions/
-media/
-polls/
 *.log
 .env

@@ -81,3 +81,101 @@ X-Connector-Secret: {{connectorSecret}}
 
 ### Connector debug buffer
 GET {{api}}/api/whatsapp/debug/events
+
+
+### ===================================================================
+### LinkedIn (unofficial — session cookie + per-account proxy). See LINKEDIN_PLAN.md
+### ===================================================================
+
+### L1. Create a LinkedIn account
+# @name createLi
+POST {{api}}/api/accounts
+Content-Type: application/json
+
+{ "provider": "linkedin", "password": "{{pw}}", "displayName": "My LinkedIn" }
+
+### capture id
+@liId = {{createLi.response.body.id}}
+
+### L2. Connect — submit the session cookie + ban-avoidance identity.
+### proxyUrl is REQUIRED with PROXY_PROVIDER=manual (per-account residential proxy, §6.1);
+### omit it when the connector runs PROXY_PROVIDER=webshare (auto-provisioned).
+POST {{api}}/api/accounts/{{liId}}/connect
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{
+  "li_at": "AQEDA...paste-your-cookie...",
+  "jsessionid": "ajax:1234567890",
+  "proxyUrl": "http://user:pass@proxy-host:port",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}
+
+### L2b. Connect — full cookie jar (best: keeps the session alive longest).
+### Paste DevTools → Network → any linkedin.com request → "Copy value" of the Cookie header.
+POST {{api}}/api/accounts/{{liId}}/connect
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "cookieHeader": "li_at=...; JSESSIONID=\"ajax:...\"; bcookie=\"...\"; bscookie=\"...\"; lidc=\"...\"", "proxyUrl": "http://user:pass@host:port" }
+
+### L2c. Connect — username / password (needs Playwright in the connector).
+### May return status "waiting_for_credentials" with a pending checkpoint — then call L2d.
+POST {{api}}/api/accounts/{{liId}}/connect
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "username": "me@example.com", "password": "...", "proxyUrl": "http://user:pass@host:port", "timezone": "America/New_York" }
+
+### L2d. Submit the emailed / SMS / authenticator code for a pending checkpoint.
+POST {{api}}/api/accounts/{{liId}}/connect
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "challengeCode": "123456" }
+
+### L3. Poll connect status
+GET {{api}}/api/accounts/{{liId}}/connect
+X-Account-Password: {{pw}}
+
+### L4. Send a message — chatId = thread id ("2-...==") or a member URN / id
+POST {{api}}/api/accounts/{{liId}}/messages
+Content-Type: application/json
+X-Account-Password: {{pw}}
+
+{ "chatId": "2-ABCdef==", "text": "Hello from the unified API" }
+
+### L5. Recent messages / conversations
+GET {{api}}/api/accounts/{{liId}}/messages
+X-Account-Password: {{pw}}
+
+### L6. Log out (wipes stored cookie + identity on the connector)
+POST {{api}}/api/accounts/{{liId}}/logout
+X-Account-Password: {{pw}}
+
+### --- Simulated LinkedIn connector calls (normally the Node service makes these) ---
+
+### Inbound message (normalized realtime/poll payload)
+POST {{api}}/api/webhooks/linkedin
+Content-Type: application/json
+X-Connector-Secret: {{connectorSecret}}
+
+{
+  "accountId": "{{liId}}",
+  "raw": {
+    "threadId": "2-ABCdef==",
+    "eventUrn": "urn:li:msg_event:(urn:li:msg_conversation:(x),1)",
+    "from": "urn:li:fsd_profile:BOB",
+    "fromMe": false,
+    "body": { "text": "hi there" },
+    "attachments": [],
+    "createdAt": 1757082000000
+  }
+}
+
+### Connection status update
+POST {{api}}/api/internal/linkedin/status
+Content-Type: application/json
+X-Connector-Secret: {{connectorSecret}}
+
+{ "accountId": "{{liId}}", "status": "connected", "externalAccountId": "urn:li:fsd_profile:ME" }

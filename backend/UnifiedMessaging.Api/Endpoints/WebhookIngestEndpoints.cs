@@ -112,9 +112,10 @@ public static class WebhookIngestEndpoints
             return Results.Ok(new { id = message.Id });
         });
 
-        // ---- Connection status updates from the WhatsApp connector ----
-        group.MapPost("/internal/whatsapp/status", async (
-            ConnectorStatusUpdate update, AppDbContext db, AccountRealtimeNotifier notifier,
+        // ---- Connection status updates from any provider connector ----
+        // (kept back-compatible: the WhatsApp connector still posts /internal/whatsapp/status)
+        group.MapPost("/internal/{provider}/status", async (
+            string provider, ConnectorStatusUpdate update, AppDbContext db, AccountRealtimeNotifier notifier,
             CustomerWebhookDispatcher dispatcher, CancellationToken ct) =>
         {
             if (!Guid.TryParse(update.AccountId, out var accountId)) return Results.BadRequest();
@@ -126,6 +127,7 @@ public static class WebhookIngestEndpoints
             {
                 "connected" => AccountStatus.Connected,
                 "waiting_for_scan" => AccountStatus.WaitingForScan,
+                "waiting_for_credentials" => AccountStatus.WaitingForCredentials,
                 "disconnected" => AccountStatus.Disconnected,
                 "logged_out" => AccountStatus.NeedsReauth,
                 _ => account.Status,

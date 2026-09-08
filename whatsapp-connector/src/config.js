@@ -12,6 +12,8 @@ module.exports = {
 
   // Downloaded inbound media is written here and served from `${publicUrl}/media/...`.
   mediaDir: process.env.MEDIA_DIR ?? "./media",
+  // Poll creation messages are persisted here so late votes still decrypt.
+  pollsDir: process.env.POLLS_DIR ?? "./polls",
   publicUrl: process.env.CONNECTOR_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? "3001"}`,
   maxMediaBytes: parseInt(process.env.MAX_MEDIA_BYTES ?? String(25 * 1024 * 1024), 10),
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Unified Messaging — WhatsApp test console</title>
+<title>Unified Messaging — test console</title>
 <style>
   :root { color-scheme: light dark; --line: #8884; --line2: #8886; --accent: #2563eb; }
   * { box-sizing: border-box; }
@@ -76,7 +76,7 @@
 </head>
 <body>
 
-<h1>WhatsApp test console
+<h1>Unified Messaging test console
   <span class="pill no account" id="status">no account</span>
   <span class="hint" id="baseLabel"></span>
 </h1>
@@ -90,6 +90,12 @@
     <fieldset>
       <legend>Account</legend>
       <div class="row">
+        <div style="flex:0 0 130px"><label>Provider</label>
+          <select id="provider">
+            <option value="whatsapp">whatsapp</option>
+            <option value="linkedin">linkedin</option>
+          </select>
+        </div>
         <div><label>Display name</label><input id="displayName" value="Test line" /></div>
         <div><label>Password (min 6 — needed for every call)</label><input id="password" type="password" value="test-pass" /></div>
         <button id="createBtn">Create account</button>
@@ -115,9 +121,59 @@
         <button id="logoutBtn" class="secondary" disabled>Log out</button>
       </div>
       <img id="qr" alt="" hidden />
-      <div class="hint">Open WhatsApp → <b>Linked devices</b> → <b>Link a device</b>, scan the QR.
+      <div class="hint" id="waHint">Open WhatsApp → <b>Linked devices</b> → <b>Link a device</b>, scan the QR.
         It rotates ~every 20&nbsp;s (auto-refreshed here). Log out drops the session and wipes stored
         credentials, so the next connect shows a fresh QR.</div>
+
+      <div id="liForm" hidden style="margin-top:8px">
+        <div class="hint" style="margin-bottom:6px">
+          <b>LinkedIn (unofficial).</b> Unofficial Voyager session — LinkedIn may
+          restrict the account. Per-account proxy strongly recommended; see
+          <code>LINKEDIN_PLAN.md</code> §6.
+        </div>
+
+        <label>Auth method</label>
+        <select id="liMethod">
+          <option value="cookieHeader">Full cookie header (recommended)</option>
+          <option value="fields">li_at + JSESSIONID</option>
+          <option value="password">Email + password (connector needs Playwright)</option>
+        </select>
+
+        <div id="liRowCookieHeader">
+          <label>Cookie header — DevTools → Network → any <code>linkedin.com</code> request → copy the <b>cookie</b> request header</label>
+          <textarea id="liCookieHeader" style="min-height:64px" placeholder='li_at=...; JSESSIONID="ajax:..."; bcookie="..."; bscookie="..."; lidc="..."'></textarea>
+        </div>
+
+        <div id="liRowFields" hidden>
+          <label>li_at cookie</label><input id="liAt" placeholder="AQEDA..." />
+          <label>JSESSIONID cookie</label><input id="liJsession" placeholder='ajax:1234567890' />
+        </div>
+
+        <div id="liRowPassword" hidden>
+          <label>Email</label><input id="liUser" placeholder="me@example.com" />
+          <label>Password</label><input id="liPass" type="password" />
+        </div>
+
+        <label>Proxy URL <span class="hint">(blank only if the connector runs a managed proxy pool)</span></label>
+        <input id="liProxy" placeholder="http://user:pass@host:port" />
+        <div class="row">
+          <div><label>User-Agent (optional)</label><input id="liUa" placeholder="default Chrome UA" /></div>
+          <div><label>Timezone (optional)</label><input id="liTz" placeholder="America/New_York" /></div>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;margin:4px 0 8px">
+          <input id="liConsent" type="checkbox" style="width:auto;margin:0">
+          I understand LinkedIn may restrict this account.
+        </label>
+        <button id="liConnectBtn" class="secondary">Connect</button>
+
+        <div id="liChallengeRow" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
+          <label>Checkpoint code — LinkedIn emailed / texted a code, or check your authenticator</label>
+          <div class="row">
+            <div><input id="liChallengeCode" placeholder="123456" /></div>
+            <button id="liChallengeBtn" class="secondary">Submit code</button>
+          </div>
+        </div>
+      </div>
     </fieldset>
 
     <fieldset id="clientApiFs" class="disabled-overlay">
@@ -260,8 +316,25 @@ const log = m => { $("#log").textContent =
 
 let accountId = localStorage.getItem("accountId") || null;
 let accountPassword = localStorage.getItem("accountPassword") || null;
+let accountProvider = localStorage.getItem("accountProvider") || "whatsapp";
 let pollTimer = null;
 let history = [];
+
+// Show WhatsApp vs LinkedIn connect UI.
+function applyProviderUi() {
+  const isLi = accountProvider === "linkedin";
+  $("#waHint").hidden = isLi;
+  $("#liForm").hidden = !isLi;
+  $("#connectBtn").hidden = isLi;              // LinkedIn connects via the cookie form
+  $("#modeFileBtn").style.display = isLi ? "none" : "";
+  $("#modePollBtn").style.display = isLi ? "none" : "";
+  if (isLi) {
+    setSendMode("text");
+    $("#sendTo").placeholder = "thread id (2-…==) or member URN";
+  } else {
+    $("#sendTo").placeholder = "491701234567";
+  }
+}
 
 function authHeaders() {
   const h = { "Content-Type": "application/json" };
@@ -310,11 +383,15 @@ function setStatus(s) {
 }
 
 // ---------- account lifecycle ----------
-function useAccount(id, password) {
+function useAccount(id, password, provider) {
   accountId = id;
   accountPassword = password;
+  if (provider) accountProvider = provider;
   localStorage.setItem("accountId", id);
   localStorage.setItem("accountPassword", password);
+  localStorage.setItem("accountProvider", accountProvider);
+  $("#provider").value = accountProvider;
+  applyProviderUi();
   $("#accId").textContent = id;
   $("#apiAcc").textContent = id;
   $("#connectBtn").disabled = false;
@@ -327,17 +404,20 @@ function useAccount(id, password) {
 
 $("#createBtn").onclick = async () => {
   const password = $("#password").value;
+  const provider = $("#provider").value;
   if ((password || "").length < 6) { log("password must be at least 6 characters"); return; }
   try {
     const a = await api("/api/accounts", {
       method: "POST",
-      body: JSON.stringify({ provider: "whatsapp", password, displayName: $("#displayName").value }),
+      body: JSON.stringify({ provider, password, displayName: $("#displayName").value }),
     });
-    useAccount(a.id, password);
+    useAccount(a.id, password, a.provider || provider);
     setStatus(a.status);
-    log("account created " + a.id + " — password stored locally");
+    log("account created " + a.id + " (" + (a.provider || provider) + ") — password stored locally");
   } catch (e) { log("create failed: " + e.message); }
 };
+
+$("#provider").onchange = () => { accountProvider = $("#provider").value; applyProviderUi(); };
 
 $("#useExistingBtn").onclick = async () => {
   const id = $("#existingId").value.trim();
@@ -348,10 +428,10 @@ $("#useExistingBtn").onclick = async () => {
   accountId = id; accountPassword = password;
   try {
     const a = await api(`/api/accounts/${id}`);
-    useAccount(id, password);
+    useAccount(id, password, a.provider);
     setStatus(a.status);
-    log("using existing account " + id + " (" + a.status + ")");
-    if (a.status === "connected" || a.status === "waiting_for_scan") resumeSession();
+    log("using existing account " + id + " (" + a.provider + ", " + a.status + ")");
+    if (a.provider !== "linkedin" && (a.status === "connected" || a.status === "waiting_for_scan")) resumeSession();
   } catch (e) {
     accountId = saved.accountId; accountPassword = saved.accountPassword;
     log("could not use account: " + e.message);
@@ -361,6 +441,7 @@ $("#useExistingBtn").onclick = async () => {
 $("#forgetBtn").onclick = () => {
   localStorage.removeItem("accountId");
   localStorage.removeItem("accountPassword");
+  localStorage.removeItem("accountProvider");
   accountId = null; accountPassword = null;
   $("#accId").textContent = $("#apiAcc").textContent = "—";
   $("#connectBtn").disabled = $("#logoutBtn").disabled = $("#forgetBtn").disabled = true;
@@ -374,6 +455,7 @@ async function pollConnect() {
   try {
     const r = await api(`/api/accounts/${accountId}/connect`);
     if (r.qrImageDataUrl) { $("#qr").src = r.qrImageDataUrl; $("#qr").hidden = false; }
+    if (accountProvider === "linkedin") $("#liChallengeRow").hidden = !r.checkpoint;
     setStatus(r.status);
     if (r.status === "connected") {
       clearInterval(pollTimer); pollTimer = null;
@@ -383,6 +465,71 @@ async function pollConnect() {
 }
 
 $("#connectBtn").onclick = () => resumeSession({ showQr: true });
+
+// LinkedIn: method toggle.
+$("#liMethod").onchange = () => {
+  const m = $("#liMethod").value;
+  $("#liRowCookieHeader").hidden = m !== "cookieHeader";
+  $("#liRowFields").hidden = m !== "fields";
+  $("#liRowPassword").hidden = m !== "password";
+  $("#liConnectBtn").textContent = m === "password" ? "Log in" : "Connect";
+};
+
+// LinkedIn: submit credentials + identity, then poll status.
+$("#liConnectBtn").onclick = async () => {
+  if (!$("#liConsent").checked) { log("please acknowledge the account-restriction risk"); return; }
+  const method = $("#liMethod").value;
+  const body = {};
+
+  if (method === "cookieHeader") {
+    body.cookieHeader = $("#liCookieHeader").value.trim();
+    if (!body.cookieHeader.includes("li_at=")) { log("paste the full cookie header (must contain li_at=)"); return; }
+  } else if (method === "fields") {
+    body.li_at = $("#liAt").value.trim();
+    body.jsessionid = $("#liJsession").value.trim();
+    if (!body.li_at || !body.jsessionid) { log("li_at and JSESSIONID are both required"); return; }
+  } else {
+    body.username = $("#liUser").value.trim();
+    body.password = $("#liPass").value;
+    if (!body.username || !body.password) { log("email and password are both required"); return; }
+  }
+
+  const proxyUrl = $("#liProxy").value.trim();
+  if (proxyUrl) body.proxyUrl = proxyUrl;
+  const ua = $("#liUa").value.trim();
+  if (ua) body.userAgent = ua;
+  const tz = $("#liTz").value.trim();
+  if (tz) body.timezone = tz;
+
+  try {
+    const r = await api(`/api/accounts/${accountId}/connect`, { method: "POST", body: JSON.stringify(body) });
+    // clear anything sensitive off screen
+    $("#liCookieHeader").value = $("#liAt").value = $("#liJsession").value = $("#liPass").value = "";
+    $("#liChallengeRow").hidden = !r.checkpoint;
+    if (r.checkpoint) log("linkedin checkpoint — enter the code LinkedIn just sent");
+    else log("linkedin connect: " + r.status);
+    setStatus(r.status);
+    clearInterval(pollTimer);
+    pollTimer = setInterval(pollConnect, 3000);
+  } catch (e) { log("linkedin connect failed: " + e.message); }
+};
+
+// LinkedIn: submit a login checkpoint code.
+$("#liChallengeBtn").onclick = async () => {
+  const code = $("#liChallengeCode").value.trim();
+  if (!code) { log("enter the checkpoint code"); return; }
+  try {
+    const r = await api(`/api/accounts/${accountId}/connect`, {
+      method: "POST", body: JSON.stringify({ challengeCode: code }),
+    });
+    $("#liChallengeCode").value = "";
+    $("#liChallengeRow").hidden = !r.checkpoint;
+    log(r.checkpoint ? "another checkpoint step — enter the next code" : "checkpoint cleared: " + r.status);
+    setStatus(r.status);
+    clearInterval(pollTimer);
+    pollTimer = setInterval(pollConnect, 3000);
+  } catch (e) { log("checkpoint failed: " + e.message); }
+};
 
 // Resume a session. If stored WhatsApp credentials are still valid the connector
 // reconnects silently (no QR). A QR only appears when a fresh scan is required.
@@ -721,15 +868,25 @@ $("#refreshDbg").onclick = loadDebug;
 renderEndpoints();
 renderHistory();
 if (accountId && accountPassword) {
+  $("#provider").value = accountProvider;
+  applyProviderUi();
   $("#accId").textContent = $("#apiAcc").textContent = accountId;
   $("#connectBtn").disabled = $("#logoutBtn").disabled = $("#forgetBtn").disabled = false;
   $("#path").value = `/api/accounts/${accountId}`;
   api(`/api/accounts/${accountId}`)
     .then(a => {
+      accountProvider = a.provider || accountProvider;
+      localStorage.setItem("accountProvider", accountProvider);
+      $("#provider").value = accountProvider; applyProviderUi();
       setStatus(a.status);
       loadMessages();
       // Session persists across reloads — resume it without asking for a QR again.
-      if (["connected", "waiting_for_scan", "pending"].includes(a.status)) resumeSession();
+      // LinkedIn needs the cookie re-submitted, so only auto-resume once connected.
+      if (a.provider === "linkedin") {
+        if (a.status === "connected") { clearInterval(pollTimer); pollTimer = setInterval(pollConnect, 5000); }
+      } else if (["connected", "waiting_for_scan", "pending"].includes(a.status)) {
+        resumeSession();
+      }
     })
     .catch(e => {
       log("saved account no longer valid (" + e.message + ")");

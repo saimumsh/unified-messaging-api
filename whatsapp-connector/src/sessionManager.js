@@ -60,13 +60,24 @@ class SessionManager {
     m.set(msg.key.id, msg);
     if (m.size > 300) m.delete(m.keys().next().value); // FIFO cap
 
-    const content = msg.message ?? {};
-    if (content.pollCreationMessage || content.pollCreationMessageV2 || content.pollCreationMessageV3) {
+    const c = msg.message ?? {};
+    if (c.pollCreationMessage || c.pollCreationMessageV2 || c.pollCreationMessageV3 || c.pollCreationMessageV4) {
+      this._forcePoll(accountId, msg); // cache + persist, long-lived
+    }
+  }
+
+  _loadPolls(accountId, log) {
+    try {
+      const dir = path.join(config.pollsDir, accountId);
+      if (!fs.existsSync(dir)) return;
       let p = this._polls.get(accountId);
       if (!p) this._polls.set(accountId, (p = new Map()));
-      p.set(msg.key.id, msg);
-      if (p.size > 200) p.delete(p.keys().next().value);
-    }
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".json")) continue;
+        try { p.set(f.slice(0, -5), JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"))); } catch {}
+      }
+      if (p.size) log?.info({ count: p.size }, "loaded persisted polls");
+    } catch { /* best effort */ }
   }
 
   _recall(accountId, id) {
@@ -106,6 +117,7 @@ class SessionManager {
     }
 
     const log = this.logger.child({ accountId });
+    this._loadPolls(accountId, log);
     const { state, saveCreds } = await useMultiFileAuthState(
       path.join(config.sessionsDir, accountId),
     );
@@ -117,6 +129,9 @@ class SessionManager {
       printQRInTerminal: false,
       logger: this.logger.child({ accountId, comp: "baileys" }),
       markOnlineOnConnect: false,
+      // Lets Baileys retrieve the original message (needed to decrypt poll votes,
+      // send read receipts, resend on retry).
+      getMessage: async (key) => this._recall(accountId, key.id)?.message ?? undefined,
     });
 
     this._setSession(accountId, { sock, qr: null, status: "connecting", reconnectAttempts: existing?.reconnectAttempts ?? 0 });
@@ -187,6 +202,17 @@ class SessionManager {
         // Remember every message (any type) for quoted replies + poll votes.
         this._remember(accountId, msg);
 
+        // Poll votes can arrive here as an encrypted pollUpdateMessage node.
+        if (msg.message.pollUpdateMessage) {
+          await this._handlePollVote(accountId, sock, {
+            key: msg.key,
+            pollCreationMessageKey: msg.message.pollUpdateMessage.pollCreationMessageKey,
+            vote: msg.message.pollUpdateMessage.vote,
+            ts: msg.messageTimestamp,
+          }, log);
+          continue;
+        }
+
         // "notify" = a genuinely new message; other types are history/appends.
         if (type !== "notify") {
           this._debug({ type, id: msg.key?.id, rawKeys, contentKeys, skipped: `type=${type}` });
@@ -203,32 +229,20 @@ class SessionManager {
       }
     });
 
-    // Poll votes arrive as encrypted updates; decrypt against the stored poll message.
+    // Poll votes also arrive as message updates carrying pollUpdates.
     sock.ev.on("messages.update", async (updates) => {
       for (const u of updates) {
         const pollUpdates = u.update?.pollUpdates;
         if (!pollUpdates?.length) continue;
-        const pollMsg = this._recall(accountId, u.key?.id);
-        if (!pollMsg) {
-          log.warn({ id: u.key?.id }, "poll vote for an unknown poll (not in cache)");
-          continue;
-        }
-        try {
-          const meId = jidNormalizedUser(sock.user?.id);
-          const agg = getAggregateVotesInPollMessage(
-            { message: pollMsg.message, pollUpdates }, meId,
-          );
-          const voter = jidNormalizedUser(pollUpdates.at(-1)?.pollUpdateMessageKey?.participant
-            ?? pollUpdates.at(-1)?.pollUpdateMessageKey?.remoteJid ?? u.key?.participant ?? u.key?.remoteJid);
-          const selected = agg.filter(a => a.voters.includes(voter)).map(a => a.name);
-          log.info({ poll: u.key?.id, voter, selected }, "forwarding poll vote");
-          this._debug({ id: u.key?.id, voter, selected, forwarded: "poll vote" });
-          await forwardMessage(accountId, {
-            pollVote: { chatId: u.key?.remoteJid, pollMsgId: u.key?.id, voter, selectedOptions: selected },
-          }, log);
-        } catch (err) {
-          log.warn({ err: err.message, id: u.key?.id }, "poll vote decrypt failed");
-        }
+        const last = pollUpdates.at(-1);
+        await this._handlePollVote(accountId, sock, {
+          key: u.key,                                   // key of the POLL message
+          pollCreationMessageKey: u.key,
+          vote: last?.vote,
+          voterKey: last?.pollUpdateMessageKey,
+          ts: last?.senderTimestampMs,
+          preUpdates: pollUpdates,                      // already-shaped, use directly if present
+        }, log);
       }
     });
 
@@ -303,8 +317,32 @@ class SessionManager {
         selectableCount: poll.selectableCount ?? 1,
       },
     });
-    this._remember(accountId, result); // so incoming votes can be aggregated
+    // Force-cache the poll so incoming votes can be aggregated even if the
+    // returned message shape isn't recognised by _remember's key check.
+    this._forcePoll(accountId, result);
+    this._debug({
+      id: result?.key?.id,
+      contentKeys: Object.keys(result?.message ?? {}),
+      hasSecret: !!result?.message?.messageContextInfo?.messageSecret,
+      forwarded: "poll created (cached)",
+    });
     return { id: result?.key?.id ?? null, jid };
+  }
+
+  _forcePoll(accountId, msg) {
+    if (!msg?.key?.id) return;
+    let p = this._polls.get(accountId);
+    if (!p) this._polls.set(accountId, (p = new Map()));
+    p.set(msg.key.id, msg);
+    try {
+      const dir = path.join(config.pollsDir, accountId);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${msg.key.id}.json`), JSON.stringify(msg));
+    } catch { /* best effort */ }
+  }
+
+  debugPolls(accountId) {
+    return [...(this._polls.get(accountId)?.keys() ?? [])];
   }
 
   async groupMetadata(accountId, groupJid) {
@@ -398,6 +436,50 @@ class SessionManager {
     }
     const jid = to.includes("@") ? to : `${to.replace(/^\+/, "")}@s.whatsapp.net`;
     return { sock: session.sock, jid };
+  }
+
+  /** Decrypt a poll vote against the cached poll-creation message and forward it. */
+  async _handlePollVote(accountId, sock, v, log) {
+    const pollId = v.pollCreationMessageKey?.id ?? v.key?.id;
+    const pollMsg = this._polls.get(accountId)?.get(pollId) ?? this._recall(accountId, pollId);
+
+    this._debug({
+      id: pollId, hasPollMsg: !!pollMsg,
+      voterKey: v.voterKey?.participant ?? v.voterKey?.remoteJid ?? null,
+      forwarded: pollMsg ? "poll vote (attempt)" : "poll vote SKIPPED (poll not cached)",
+    });
+    if (!pollMsg) {
+      log.warn({ pollId }, "poll vote for a poll not in cache — was it created before the connector started?");
+      return;
+    }
+
+    try {
+      const meId = jidNormalizedUser(sock.user?.id);
+      const pollUpdates = v.preUpdates?.length
+        ? v.preUpdates
+        : [{ pollUpdateMessageKey: v.voterKey ?? v.key, vote: v.vote, senderTimestampMs: v.ts }];
+
+      const agg = getAggregateVotesInPollMessage({ message: pollMsg.message, pollUpdates }, meId);
+
+      const voter = jidNormalizedUser(
+        v.voterKey?.participant ?? v.voterKey?.remoteJid ?? v.key?.participant ?? v.key?.remoteJid,
+      );
+      const selected = agg.filter(a => (a.voters ?? []).includes(voter)).map(a => a.name);
+
+      log.info({ pollId, voter, selected }, "forwarding poll vote");
+      this._debug({ id: pollId, voter, selected, forwarded: "poll vote" });
+      await forwardMessage(accountId, {
+        pollVote: {
+          chatId: pollMsg.key.remoteJid,
+          pollMsgId: pollId,
+          voter,
+          selectedOptions: selected,
+        },
+      }, log);
+    } catch (err) {
+      log.warn({ err: err.message, pollId }, "poll vote decrypt failed");
+      this._debug({ id: pollId, pollVoteError: err.message });
+    }
   }
 
   /** Decrypt + persist any media on an inbound message; returns a served-URL descriptor. */

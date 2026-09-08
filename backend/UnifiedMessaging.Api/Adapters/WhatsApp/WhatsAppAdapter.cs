@@ -45,6 +45,18 @@ public class WhatsAppAdapter(WhatsAppConnectorClient connector, ILogger<WhatsApp
         return new ConnectResult(accountId, status, QrImageDataUrl: qr?.Qr);
     }
 
+    public async Task LogoutAsync(Guid accountId, CancellationToken ct = default)
+    {
+        try
+        {
+            await connector.LogoutAsync(accountId, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or ConnectorException)
+        {
+            logger.LogWarning(ex, "WhatsApp connector unreachable during logout for {AccountId}", accountId);
+        }
+    }
+
     public async Task<UnifiedMessage> SendMessageAsync(
         string accountId, string chatId, string text,
         string? replyToMessageId = null, string[]? mentions = null, CancellationToken ct = default)

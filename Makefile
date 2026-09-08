@@ -1,4 +1,4 @@
-.PHONY: db db-stop api connector migrate test install
+.PHONY: db db-stop api connector linkedin-connector migrate test install
 
 DB_NAME := unified-messaging-postgres
 
@@ -12,6 +12,7 @@ db-stop:
 
 install:
 	cd whatsapp-connector && npm install
+	cd linkedin-connector && npm install
 
 migrate:
 	cd backend/UnifiedMessaging.Api && dotnet ef database update
@@ -21,6 +22,9 @@ api:  ## Run the .NET unified API on :5080
 
 connector:  ## Run the Node/Baileys WhatsApp connector on :3001
 	cd whatsapp-connector && npm start
+
+linkedin-connector:  ## Run the Node/Voyager LinkedIn connector on :3002
+	cd linkedin-connector && npm start
 
 test:
 	dotnet test

@@ -3,7 +3,20 @@ using System.Text.Json;
 namespace UnifiedMessaging.Api.Contracts;
 
 /// <summary>Request to begin connecting an account for a given provider.</summary>
-public record ConnectRequest(Guid AccountId, string Provider, string? DisplayName = null);
+/// <param name="Credentials">
+/// Optional provider-specific connect input. QR providers (WhatsApp) leave this
+/// empty. LinkedIn passes its session cookie plus ban-avoidance identity here,
+/// e.g. <c>{ "li_at", "jsessionid", "proxyUrl", "userAgent" }</c>. The backend
+/// never persists it — it goes straight to the provider connector.
+/// </param>
+public record ConnectRequest(
+    Guid AccountId,
+    string Provider,
+    string? DisplayName = null,
+    Dictionary<string, string>? Credentials = null);
+
+/// <summary>Optional JSON body accepted by <c>POST /api/accounts/{id}/connect</c>.</summary>
+public record ConnectBody(Dictionary<string, string>? Credentials = null);
 
 /// <summary>
 /// Result of a connect call. For QR providers <see cref="QrImageDataUrl"/> is set;
@@ -13,7 +26,8 @@ public record ConnectResult(
     Guid AccountId,
     string Status,
     string? QrImageDataUrl = null,
-    string? RedirectUrl = null);
+    string? RedirectUrl = null,
+    bool Checkpoint = false);
 
 /// <summary>Send text (<paramref name="Text"/>) or a media file (<paramref name="Media"/>).</summary>
 public record SendMessageRequest(

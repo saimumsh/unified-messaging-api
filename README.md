@@ -48,6 +48,7 @@ customer webhook fan-out.
 | `backend/UnifiedMessaging.Api` | ASP.NET Core minimal API, EF Core + PostgreSQL, SignalR |
 | `backend/UnifiedMessaging.Api.Tests` | xUnit — Baileys payload normalization, webhook signing |
 | `whatsapp-connector/` | Node + Baileys connector service |
+| `linkedin-connector/` | Node + Voyager connector service (LinkedIn, unofficial — see `LINKEDIN_PLAN.md`) |
 | `docker-compose.yml` | PostgreSQL 17 |
 | `requests.http` | End-to-end request walkthrough |
 
@@ -252,7 +253,39 @@ model, dispatcher, retry and signing are provider-agnostic.
 |---------|--------|-----------|
 | Telegram | Official Bot API, real webhooks | Easy |
 | Gmail / Outlook | OAuth2 | Easy |
-| LinkedIn | Unofficial, browser session | Hard (same fragility as WhatsApp) |
+| LinkedIn | Unofficial, browser session | Hard (same fragility as WhatsApp) — **implemented**, see below |
+
+### LinkedIn (second channel — unofficial)
+
+`linkedin-connector/` + `LinkedInAdapter` connect a **personal LinkedIn account**
+the "WhatsApp way": no official API, just the logged-in session (the Voyager
+approach Unipile uses). There is **no QR**. See [`LINKEDIN_PLAN.md`](LINKEDIN_PLAN.md)
+for the design + ban-avoidance rules, and
+[`linkedin-connector/README.md`](linkedin-connector/README.md) to run it.
+
+```bash
+make install            # installs both connectors
+make linkedin-connector # :3002
+
+# then, against the unified API:
+POST /api/accounts               { "provider": "linkedin", "password": "..." }
+POST /api/accounts/{id}/connect  { "cookieHeader": "li_at=...; JSESSIONID=\"ajax:...\"; ...",
+                                   "proxyUrl": "http://user:pass@host:port" }
+# status -> connected; inbound DMs -> signed message.received; POST /messages to reply
+```
+
+Auth options on `/connect`: full cookie jar (`cookieHeader`), individual fields
+(`li_at` + `jsessionid`), or `username` + `password` (needs Playwright in the
+connector; checkpoint code goes back via `{ "challengeCode": "..." }`).
+
+**Ban-avoidance built in** (§6 of the plan): per-account proxy (`PROXY_PROVIDER` =
+`manual` paste / `webshare` auto-provision / `none`), persisted browser
+fingerprint, full cookie jar with `Set-Cookie` refresh, and a per-account
+scheduler enforcing rolling-24h caps (send/invite/read/search), burst limits,
+human gap+jitter, quiet hours, and a `429`/`999` cooldown.
+
+`chatId` is a LinkedIn thread id (`2-…==`) or a member URN. Media, reactions,
+group threads and fleet orchestration are phase 2/3.
 
 ---
 
@@ -264,6 +297,7 @@ model, dispatcher, retry and signing are provider-agnostic.
 |-----|---------|
 | `ConnectionStrings__Postgres` | `Host=localhost;Port=5432;Database=unified_messaging;Username=unified;Password=unified` |
 | `WhatsAppConnector__BaseUrl` | `http://localhost:3001` |
+| `LinkedInConnector__BaseUrl` | `http://localhost:3002` |
 | `Connector__SharedSecret` | `dev-connector-secret` |
 
 **Connector** (`.env`, see `.env.example`): `PORT`, `BACKEND_URL`,

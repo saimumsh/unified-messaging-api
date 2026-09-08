@@ -21,6 +21,13 @@ public interface IMessagingProviderAdapter
     /// <summary>Fetch the current QR (if the connect flow is still waiting for a scan).</summary>
     Task<ConnectResult> GetConnectStatusAsync(Guid accountId, CancellationToken ct = default);
 
+    /// <summary>
+    /// End the provider session and wipe stored credentials on the connector, so
+    /// the next connect starts fresh. Should swallow "connector unreachable" —
+    /// the caller still clears local state.
+    /// </summary>
+    Task LogoutAsync(Guid accountId, CancellationToken ct = default);
+
     Task<UnifiedMessage> SendMessageAsync(
         string accountId, string chatId, string text,
         string? replyToMessageId = null, string[]? mentions = null, CancellationToken ct = default);

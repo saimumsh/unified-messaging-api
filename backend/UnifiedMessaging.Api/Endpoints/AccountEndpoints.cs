@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using UnifiedMessaging.Api.Adapters;
 using UnifiedMessaging.Api.Adapters.WhatsApp;
@@ -46,7 +47,9 @@ public static class AccountEndpoints
             return error ?? Results.Ok(account);
         });
 
-        // Begin the connect flow (QR for WhatsApp, OAuth redirect for others).
+        // Begin the connect flow (QR for WhatsApp, cookie+proxy for LinkedIn, OAuth redirect for others).
+        // Optional JSON body carries provider-specific connect input, e.g. for LinkedIn:
+        //   { "li_at": "...", "jsessionid": "...", "proxyUrl": "http://user:pass@host:port", "userAgent": "..." }
         group.MapPost("/{id:guid}/connect", async (
             Guid id, HttpRequest http, ProviderResolver resolver, AppDbContext db,
             AccountRealtimeNotifier notifier, CancellationToken ct) =>
@@ -54,13 +57,15 @@ public static class AccountEndpoints
             var (account, error) = await AccountAuth.ResolveAsync(id, http, db, ct);
             if (error is not null) return error;
 
+            var credentials = await ReadCredentialsAsync(http, ct);
+
             var adapter = resolver.Get(account!.Provider);
 
             ConnectResult result;
             try
             {
                 result = await adapter.ConnectAccountAsync(
-                    new ConnectRequest(account.Id, account.Provider, account.DisplayName), ct);
+                    new ConnectRequest(account.Id, account.Provider, account.DisplayName, credentials), ct);
             }
             catch (Exception ex) when (ex is HttpRequestException or ConnectorException)
             {
@@ -89,18 +94,18 @@ public static class AccountEndpoints
             return Results.Ok(result);
         });
 
-        // End the WhatsApp session and wipe stored credentials (next connect = fresh QR).
+        // End the provider session and wipe stored credentials (next connect = fresh QR / cookie).
         group.MapPost("/{id:guid}/logout", async (
             Guid id, HttpRequest http, ProviderResolver resolver, AppDbContext db,
-            WhatsAppConnectorClient connector, AccountRealtimeNotifier notifier, CancellationToken ct) =>
+            AccountRealtimeNotifier notifier, CancellationToken ct) =>
         {
             var (account, error) = await AccountAuth.ResolveAsync(id, http, db, ct);
             if (error is not null) return error;
 
-            try { await connector.LogoutAsync(id, ct); }
-            catch (Exception ex) when (ex is HttpRequestException or ConnectorException) { /* connector down; still clear local state */ }
+            // Adapters swallow "connector unreachable" — we still clear local state.
+            await resolver.Get(account!.Provider).LogoutAsync(id, ct);
 
-            account!.Status = AccountStatus.Disconnected;
+            account.Status = AccountStatus.Disconnected;
             account.ExternalAccountId = null;
             account.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
@@ -299,6 +304,38 @@ public static class AccountEndpoints
                     statusCode: StatusCodes.Status502BadGateway);
             }
         }).WithTags("Debug");
+    }
+
+    /// <summary>
+    /// Reads the optional connect body as a flat string->string map. Tolerates an
+    /// empty body (WhatsApp sends none) and non-string JSON values (coerced to text).
+    /// </summary>
+    private static async Task<Dictionary<string, string>?> ReadCredentialsAsync(HttpRequest http, CancellationToken ct)
+    {
+        if (http.ContentLength is null or 0) return null;
+
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(http.Body, cancellationToken: ct);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var value = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.String => prop.Value.GetString(),
+                    JsonValueKind.Null or JsonValueKind.Undefined => null,
+                    _ => prop.Value.GetRawText(),
+                };
+                if (value is not null) map[prop.Name] = value;
+            }
+            return map.Count > 0 ? map : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static async Task<IResult> PersistOutboundAsync(

@@ -39,6 +39,8 @@ public static class AccountStatus
 {
     public const string Pending = "pending";
     public const string WaitingForScan = "waiting_for_scan";
+    /// <summary>Connect flow needs credentials submitted (LinkedIn: session cookie + proxy).</summary>
+    public const string WaitingForCredentials = "waiting_for_credentials";
     public const string Connected = "connected";
     public const string Disconnected = "disconnected";
     public const string NeedsReauth = "needs_reauth";
